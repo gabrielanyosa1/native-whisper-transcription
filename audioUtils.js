@@ -84,6 +84,100 @@ export const convertToWavFormat = async (inputPath) => {
   }
 };
 
+// Get audio duration in milliseconds
+export const getAudioDuration = async (audioPath) => {
+  try {
+    // For files from assets (like sample.wav), we need a different approach
+    if (typeof audioPath !== 'string') {
+      console.log('Asset file detected, using default duration');
+      return 60000; // Default to 1 minute for bundled assets
+    }
+    
+    // Use a simpler FFmpeg command
+    const command = `-i "${audioPath}" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1`;
+    
+    return new Promise((resolve, reject) => {
+      FFmpegKit.executeAsync(
+        command,
+        async (session) => {
+          const returnCode = await session.getReturnCode();
+          if (ReturnCode.isSuccess(returnCode)) {
+            const output = await session.getOutput();
+            console.log('Duration output:', output.trim());
+            if (output && output.trim()) {
+              // Output will be the duration in seconds
+              const durationSeconds = parseFloat(output.trim());
+              const durationMs = durationSeconds * 1000;
+              resolve(durationMs);
+            } else {
+              console.log('No duration output, using default');
+              resolve(60000); // Default to 1 minute if no duration detected
+            }
+          } else {
+            console.error('FFmpeg duration detection failed');
+            const output = await session.getOutput();
+            console.error('FFmpeg error output:', output);
+            // Fallback to direct transcription
+            resolve(60000); // Default to 1 minute
+          }
+        },
+        (log) => {
+          console.log(`FFmpeg duration log: ${log.getMessage()}`);
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error getting audio duration:', error);
+    // Fallback value
+    return 60000; // Default to 1 minute
+  }
+};
+
+// Extract a segment of audio from a file
+export const extractAudioSegment = async (audioPath, startMs, endMs) => {
+  try {
+    // Create a unique name for the chunk file
+    const outputPath = `${FileSystem.cacheDirectory}chunk_${Date.now()}_${Math.floor(Math.random() * 1000)}.wav`;
+    
+    // Format start and end time for FFmpeg (format: HH:MM:SS.mmm)
+    const formatTime = (ms) => {
+      const totalSeconds = ms / 1000;
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = Math.floor(totalSeconds % 60);
+      const milliseconds = Math.floor(ms % 1000);
+      
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+    };
+    
+    const startTime = formatTime(startMs);
+    const durationMs = endMs - startMs;
+    const durationTime = formatTime(durationMs);
+    
+    // Create FFmpeg command to extract segment
+    const command = `-i "${audioPath}" -ss ${startTime} -t ${durationTime} -c:a pcm_s16le -ar 16000 -ac 1 "${outputPath}"`;
+    
+    // Execute FFmpeg command
+    return new Promise((resolve, reject) => {
+      FFmpegKit.executeAsync(
+        command,
+        async (session) => {
+          const returnCode = await session.getReturnCode();
+          if (ReturnCode.isSuccess(returnCode)) {
+            resolve(outputPath);
+          } else {
+            const output = await session.getOutput();
+            reject(new Error(`FFmpeg error: ${output}`));
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error('Error extracting audio segment:', error);
+    throw error;
+  }
+};
+
 // Pick an audio file and convert if necessary
 export const pickAudioFileForTranscription = async () => {
   try {
@@ -191,5 +285,17 @@ export const processRecordingForTranscription = async (recording) => {
   } catch (error) {
     console.error('Error processing recording:', error);
     throw error;
+  }
+};
+
+// List all files in a directory
+export const listDirectoryContents = async (directory) => {
+  try {
+    const contents = await FileSystem.readDirectoryAsync(directory);
+    console.log(`Contents of ${directory}:`, contents);
+    return contents;
+  } catch (error) {
+    console.error(`Error listing directory ${directory}:`, error);
+    return [];
   }
 };

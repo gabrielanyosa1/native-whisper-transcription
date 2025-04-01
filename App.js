@@ -17,12 +17,43 @@ import * as FileSystem from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
+import { Asset } from 'expo-asset';
 import { 
   isWavFile, 
   pickAudioFileForTranscription, 
   startRecording,
   processRecordingForTranscription 
 } from './audioUtils';
+
+// Import our new performance optimization modules
+import { PERFORMANCE_PROFILES, DEFAULT_PERFORMANCE_MODE, getTranscriptionOptions } from './PerformanceProfiles';
+import { AudioChunker } from './AudioChunker';
+import { ModelManager } from './ModelManager';
+import PerformanceModeSelector from './PerformanceModeSelector';
+import ModelDownloadInfo from './ModelDownloadInfo';
+
+// Ensure models are bundled with the app
+const ensureModelsIncluded = () => {
+  try {
+    if (Platform.OS === 'ios') {
+      // This just ensures the bundler sees these files
+      // Note: Adjust paths if your models are located elsewhere
+      try {
+        console.log('Referencing models for bundling...');
+        // These paths will need to be adjusted to where your models are actually stored
+        const largeModel = require('./assets/models/ggml-large-v3-q5_0.bin');
+        const turboModel = require('./assets/models/ggml-large-v3-turbo-q5_0.bin');
+        console.log('Models referenced for bundling');
+      } catch (err) {
+        console.warn('Could not reference model files directly:', err.message);
+        console.log('This is expected if models are in the iOS bundle but not in the assets folder');
+      }
+    }
+  } catch (e) {
+    console.warn('Model reference error:', e);
+  }
+};
+ensureModelsIncluded();
 
 export default function App() {
   // State management
@@ -35,77 +66,42 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [formatWarning, setFormatWarning] = useState('');
   
+  // New state for performance mode
+  const [performanceMode, setPerformanceMode] = useState(DEFAULT_PERFORMANCE_MODE);
+  
   // Refs to maintain persistence between renders
   const whisperContextRef = useRef(null);
   const recordingRef = useRef(null);
   const audioUriRef = useRef(null);
+  const audioChunkerRef = useRef(null);
   
-  // Load model once when component mounts
+  // Create model manager
+  const modelManagerRef = useRef(null);
+  
+  // Initialize model manager
   useEffect(() => {
+    modelManagerRef.current = new ModelManager({
+      initWhisper,
+      onProgress: setProgress,
+      onStatusUpdate: setStatus
+    });
+    
+    // Load model once when component mounts
     loadWhisperModel();
     
     // Cleanup when component unmounts
     return () => {
-      // Release whisper model resources when app closes
-      if (whisperContextRef.current) {
-        try {
-          whisperContextRef.current.release();
-        } catch (error) {
-          console.error('Error releasing Whisper resources:', error);
-        }
-      }
+      releaseModel();
     };
   }, []);
 
   const loadWhisperModel = async () => {
-    // Skip if model is already loaded
-    if (whisperContextRef.current) {
-      return;
-    }
-    
     try {
       setIsLoading(true);
-      setStatus('Preparing Whisper model...');
       
-      // Get the path to the model file
-      let modelPath;
-      
-      if (Platform.OS === 'ios') {
-        // For iOS, we need to get the path to the bundled resource
-        modelPath = FileSystem.documentDirectory + 'ggml-large-v3-q5_0.bin';
-        const fileInfo = await FileSystem.getInfoAsync(modelPath);
-        
-        if (!fileInfo.exists) {
-          setStatus('Copying model file (first launch only)...');
-          // First time: Copy the file from the bundle to a location we can access
-          const bundlePath = FileSystem.bundleDirectory + 'ggml-large-v3-q5_0.bin';
-          await FileSystem.copyAsync({
-            from: bundlePath,
-            to: modelPath
-          });
-        }
-      }
-      
-      setStatus('Initializing Whisper model (this may take a moment)...');
-      setProgress(0.3);
-      
-      // Initialize whisper with the model path and store in ref
-      whisperContextRef.current = await initWhisper({
-        filePath: modelPath,
-        useGpu: true,
-        useFlashAttn: true
-      });
-
-      // Log if GPU is being used for debugging
-      console.log('Whisper model loaded with GPU:', whisperContextRef.current.gpu);
-      if (!whisperContextRef.current.gpu) {
-        console.log('Reason GPU not enabled:', whisperContextRef.current.reasonNoGPU);
-      }
-      
+      // Use model manager to load the selected model
+      whisperContextRef.current = await modelManagerRef.current.loadModel(performanceMode);
       setIsModelLoaded(true);
-      setStatus('Model loaded and ready for transcription');
-      setProgress(1);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       
       // After a delay, reset UI to idle state
       setTimeout(() => {
@@ -113,17 +109,75 @@ export default function App() {
         setProgress(0);
       }, 1000);
       
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       console.error('Model loading error:', error);
       setStatus('Error loading model: ' + error.message);
       setIsLoading(false);
       Alert.alert(
         'Model Loading Error',
-        'There was an error loading the transcription model. Please restart the app and try again.'
+        'There was an error loading the transcription model. Please restart the app and try again.',
+        [{ text: 'OK' }]
       );
     }
   };
 
+  const releaseModel = async () => {
+    try {
+      if (modelManagerRef.current) {
+        await modelManagerRef.current.releaseModel();
+      }
+      whisperContextRef.current = null;
+      setIsModelLoaded(false);
+    } catch (error) {
+      console.warn('Error releasing model:', error);
+    }
+  };
+
+  // Handle performance mode change
+  const handlePerformanceModeChange = async (newMode) => {
+    if (isLoading || isRecording) {
+      Alert.alert(
+        'Cannot Change Mode',
+        'Please finish or cancel the current operation before changing performance mode.'
+      );
+      return;
+    }
+    
+    setPerformanceMode(newMode);
+    
+    // Check if we need to load a different model
+    if (modelManagerRef.current && modelManagerRef.current.doesRequireModelChange(newMode)) {
+      try {
+        setIsModelLoaded(false);
+        setStatus('Switching model...');
+        setIsLoading(true);
+        
+        // Load the new model
+        whisperContextRef.current = await modelManagerRef.current.loadModel(newMode);
+        setIsModelLoaded(true);
+        
+        // Reset UI
+        setTimeout(() => {
+          setStatus('Ready to transcribe');
+          setProgress(0);
+          setIsLoading(false);
+        }, 1000);
+        
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (error) {
+        console.error('Error switching model:', error);
+        setStatus('Error switching model: ' + error.message);
+        setIsLoading(false);
+        
+        Alert.alert(
+          'Model Switching Error',
+          'There was an error switching the transcription model. Please try again.',
+          [{ text: 'OK' }]
+        );
+      }
+    }
+  };
 
   const transcribeAudio = async (audioPath, options = { language: 'auto' }) => {
     if (!whisperContextRef.current) {
@@ -137,8 +191,8 @@ export default function App() {
   
     try {
       setIsLoading(true);
-      setStatus('Starting transcription with language detection...');
-      setProgress(0.5);
+      setStatus('Starting transcription...');
+      setProgress(0.1);
       
       // For debugging, log the file type and options
       if (typeof audioPath === 'string') {
@@ -147,28 +201,60 @@ export default function App() {
       } else {
         console.log('Transcribing bundled asset');
       }
-      console.log('Transcription options:', options);
       
-      // Add optimized options for iPhone 15 Pro
-      const enhancedOptions = {
-        ...options,
-        maxThreads: 6,       // Use more threads for faster processing
-        beamSize: 3,         // Speed optimization (default is 5)
-        bestOf: 3,            // Faster inference (default is 5)
-        temperature: 0.0
-      };
+      // Get transcription options based on performance mode
+      const transcriptionOptions = getTranscriptionOptions(performanceMode);
+      console.log('Transcription options:', transcriptionOptions);
       
-      // Start transcription using the already loaded model
-      const { promise } = whisperContextRef.current.transcribe(audioPath, enhancedOptions);
+      // Check if we should use chunking based on file size/duration
+      const shouldUseChunking = typeof audioPath === 'string'; // Only use chunking for files, not bundled assets
       
-      // Add progress updates
-      const progressInterval = setInterval(() => {
-        setProgress((prev) => Math.min(prev + 0.05, 0.95));
-      }, 500);
+      let transcriptionResult;
       
-      const { result: transcriptionResult } = await promise;
+      if (shouldUseChunking) {
+        try {
+          // Initialize audio chunker
+          audioChunkerRef.current = new AudioChunker({
+            performanceMode,
+            onProgress: setProgress,
+            onStatusUpdate: setStatus,
+            whisperContext: whisperContextRef.current
+          });
+          
+          // Transcribe with chunking
+          const result = await audioChunkerRef.current.transcribeWithChunking(audioPath, transcriptionOptions);
+          transcriptionResult = result.result;
+        } catch (error) {
+          console.warn('Chunking failed, falling back to direct transcription:', error);
+          setStatus('Chunking failed, using direct transcription...');
+          
+          // Fallback to direct transcription - make sure whisperContextRef is valid
+          if (whisperContextRef.current && typeof whisperContextRef.current.transcribe === 'function') {
+            const { promise } = whisperContextRef.current.transcribe(audioPath, transcriptionOptions);
+            const { result } = await promise;
+            transcriptionResult = result;
+          } else {
+            throw new Error('Whisper context is not properly initialized');
+          }
+        }
+      } else {
+        // For bundled assets, use direct transcription
+        const progressInterval = setInterval(() => {
+          setProgress((prev) => Math.min(prev + 0.05, 0.95));
+        }, 500);
+        
+        // Start transcription using the loaded model - verify we have a valid context first
+        if (whisperContextRef.current && typeof whisperContextRef.current.transcribe === 'function') {
+          const { promise } = whisperContextRef.current.transcribe(audioPath, transcriptionOptions);
+          const { result } = await promise;
+          transcriptionResult = result;
+        } else {
+          throw new Error('Whisper context is not properly initialized');
+        }
+        
+        clearInterval(progressInterval);
+      }
       
-      clearInterval(progressInterval);
       setProgress(1);
       
       // Log the full result for debugging
@@ -298,6 +384,50 @@ export default function App() {
     setStatus('History cleared');
   };
 
+  // Cancel transcription
+  const cancelTranscription = () => {
+    if (audioChunkerRef.current) {
+      audioChunkerRef.current.cancel();
+      audioChunkerRef.current = null;
+    }
+    
+    setIsLoading(false);
+    setStatus('Transcription cancelled');
+    setProgress(0);
+  };
+
+  // Handle model deletion
+  const handleDeleteModels = async () => {
+    try {
+      setIsLoading(true);
+      setStatus('Deleting downloaded models...');
+      
+      // Release model and delete files
+      const result = await modelManagerRef.current.deleteAllModels();
+      
+      if (result) {
+        setStatus('Models deleted successfully');
+        setIsModelLoaded(false);
+        
+        // Reset progress after a delay
+        setTimeout(() => {
+          setIsLoading(false);
+          setProgress(0);
+          setStatus('Ready to transcribe');
+        }, 1000);
+        
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else {
+        setStatus('Error deleting models');
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Error deleting models:', error);
+      setStatus('Error deleting models: ' + error.message);
+      setIsLoading(false);
+    }
+  };
+
   // UI components
   const renderProgressBar = () => {
     if (progress === 0) return null;
@@ -352,6 +482,20 @@ export default function App() {
       {renderProgressBar()}
       {renderFormatWarning()}
       
+      {/* Add performance mode selector */}
+      <PerformanceModeSelector
+        currentMode={performanceMode}
+        onChange={handlePerformanceModeChange}
+        disabled={isLoading || isRecording}
+      />
+      
+      <ModelDownloadInfo
+        currentMode={performanceMode}
+        modelManager={modelManagerRef.current}
+        isModelLoaded={isModelLoaded}
+        onDeleteModels={handleDeleteModels}
+      />
+      
       <View style={styles.statusContainer}>
         <Text style={styles.statusText}>{status}</Text>
         {isLoading && <ActivityIndicator style={styles.loader} />}
@@ -402,6 +546,16 @@ export default function App() {
         </TouchableOpacity>
       </View>
       
+      {/* Add Cancel button when transcription is in progress */}
+      {isLoading && !isRecording && (
+        <TouchableOpacity
+          style={styles.cancelButton}
+          onPress={cancelTranscription}
+        >
+          <Text style={styles.cancelButtonText}>Cancel Transcription</Text>
+        </TouchableOpacity>
+      )}
+      
       <View style={styles.historyHeader}>
         <Text style={styles.historyTitle}>Transcription History</Text>
         {transcriptionHistory.length > 0 && (
@@ -416,6 +570,7 @@ export default function App() {
   );
 }
 
+// Use existing styles and add new ones for our added components
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -538,6 +693,18 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
     fontSize: 13
+  },
+  cancelButton: {
+    marginHorizontal: 20,
+    marginBottom: 15,
+    padding: 10,
+    backgroundColor: '#8e8e93',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontWeight: '600',
   },
   historyHeader: {
     flexDirection: 'row',

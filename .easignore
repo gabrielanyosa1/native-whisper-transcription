@@ -1,2 +1,2 @@
 # Exclude model files from EAS upload - they're already in Xcode project
-ios/MyWhisperApp/Resources/*.bin
+# ios/MyWhisperApp/Resources/*.bin --> Next build, we will attempt to build without this config
