@@ -2,7 +2,6 @@
 
 # dependencies
 node_modules/
-ios/
 # Expo
 .expo/
 dist/

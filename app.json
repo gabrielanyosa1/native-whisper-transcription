@@ -16,7 +16,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "whisperAndroidcom.mycompany.whisperandroid",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "This app requires microphone access to transcribe speech"
+        "NSMicrophoneUsageDescription": "This app requires microphone access to transcribe speech",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
