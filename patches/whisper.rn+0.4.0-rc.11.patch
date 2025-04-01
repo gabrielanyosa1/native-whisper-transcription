@@ -1,0 +1,14 @@
+diff --git a/node_modules/whisper.rn/cpp/ggml-cpu.cpp b/node_modules/whisper.rn/cpp/ggml-cpu.cpp
+index 29d9515..326c818 100644
+--- a/node_modules/whisper.rn/cpp/ggml-cpu.cpp
++++ b/node_modules/whisper.rn/cpp/ggml-cpu.cpp
+@@ -4,7 +4,9 @@
+ #include "ggml-cpu-aarch64.h"
+ #include "ggml-cpu-traits.h"
+ #include "ggml-impl.h"
++#if defined(__x86_64__) || defined(_M_X64)
+ #include "amx/amx.h"
++#endif
+ 
+ #include <cctype>
+ #include <string>

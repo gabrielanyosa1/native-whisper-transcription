@@ -13,16 +13,36 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "whisperAndroidcom.mycompany.whisperandroid",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app requires microphone access to transcribe speech"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "whisperAndroidcom.mycompany.whisperandroid"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "62c28894-e96c-40d1-842c-513eb66d8472"
+      }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "flipper": false
+          }
+        }
+      ]
+    ]
   }
 }
