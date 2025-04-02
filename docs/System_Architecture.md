@@ -146,10 +146,23 @@ flowchart TD
         M
     end
     
-    style I fill:#cde,stroke:#699,stroke-width:2px
-    style K fill:#ecb,stroke:#966,stroke-width:2px
-    style L fill:#f9f,stroke:#969,stroke-width:1px,stroke-dasharray:5 5
-    style M fill:#ddd,stroke:#999,stroke-width:1px
+    %% Light mode Google-inspired styling
+    classDef default fill:#f8f9fa,stroke:#dadce0,color:#202124,font-family:Arial,font-size:14px
+    classDef react fill:#e8f0fe,stroke:#4285f4,color:#1a73e8,font-weight:normal
+    classDef ios fill:#fef7e0,stroke:#fbbc04,color:#ea8600,font-weight:normal
+    classDef whisper fill:#e6f4ea,stroke:#34a853,color:#188038,font-weight:normal
+    classDef highlight fill:#f1f3f4,stroke:#5f6368,color:#3c4043,font-weight:bold
+    
+    %% Apply styles to nodes
+    class A,C,D,E,F,G react
+    class I,J ios
+    class K,L,M whisper
+    class H highlight
+    
+    %% Style the subgraphs
+    style JS fill:#f8f9fa,stroke:#4285f4,stroke-width:1px,color:#1a73e8,font-weight:bold
+    style iOS fill:#f8f9fa,stroke:#fbbc04,stroke-width:1px,color:#ea8600,font-weight:bold
+    style Whisper fill:#f8f9fa,stroke:#34a853,stroke-width:1px,color:#188038,font-weight:bold
 ```
 
 ### 5.1 Performance Profiles
