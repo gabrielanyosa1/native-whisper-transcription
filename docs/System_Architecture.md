@@ -1,4 +1,4 @@
-# MyWhisperApp: System Architecture and Implementation Details
+# native-whisper-transcription: System Architecture and Implementation Details
 
 **Author:** Gabriel Anyosa
 **Date:** April 3, 2025
