@@ -2,6 +2,9 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const defaultConfig = getDefaultConfig(__dirname);
 
+// Add TypeScript to source extensions
+defaultConfig.resolver.sourceExts.push('ts');
+
 // Add .bin files to the asset extensions
 defaultConfig.resolver.assetExts.push('bin');
 

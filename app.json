@@ -40,10 +40,12 @@
         "expo-build-properties",
         {
           "ios": {
-            "flipper": false
+            "flipper": false,
+            "useFrameworks": "static"
           }
         }
-      ]
+      ],
+      "expo-asset"
     ]
   }
 }

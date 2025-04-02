@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "expo": "~52.0.41",
+    "expo-asset": "~11.0.5",
     "expo-av": "~15.0.2",
     "expo-build-properties": "~0.13.2",
     "expo-dev-client": "~5.0.15",
@@ -19,7 +20,6 @@
     "expo-file-system": "~18.0.12",
     "expo-haptics": "~14.0.1",
     "expo-status-bar": "~2.0.1",
-    "ffmpeg-kit-react-native": "^6.0.2",
     "metro": "^0.82.1",
     "react": "18.3.1",
     "react-native": "0.76.7",
@@ -28,7 +28,9 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "patch-package": "^8.0.0",
-    "postinstall-postinstall": "^2.1.0"
+    "postinstall-postinstall": "^2.1.0",
+    "typescript": "^5.3.3",
+    "@types/react": "~18.3.12"
   },
   "private": true
 }

@@ -3,9 +3,13 @@
  * Handles splitting audio into chunks, processing each chunk, and merging results.
  */
 
-import { FFmpegKit, ReturnCode } from 'ffmpeg-kit-react-native';
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import { PERFORMANCE_PROFILES } from './PerformanceProfiles';
+
+// --- Import required functions directly from audioUtils ---
+// These functions now handle URI/Path logic internally for native calls.
+import { getAudioDuration, extractAudioSegment } from './audioUtils';
 
 /**
  * AudioChunker handles splitting audio files into manageable chunks,
@@ -16,26 +20,28 @@ export class AudioChunker {
    * Create a new AudioChunker instance
    */
   constructor(options) {
-    const { 
+    const {
       performanceMode = 'balanced',
       onProgress = () => {},
       onStatusUpdate = () => {},
-      whisperContext
+      whisperContext,
+      // Removed: getAudioDuration, extractAudioSegment - we import them now
     } = options || {};
 
     // Get profile settings for the selected performance mode
     this.profile = PERFORMANCE_PROFILES[performanceMode] || PERFORMANCE_PROFILES.balanced;
     this.chunkSize = this.profile.chunkSizeMs;
     this.overlap = this.profile.overlapMs;
-    
+
     // Callbacks and context
     this.onProgress = onProgress;
     this.onStatusUpdate = onStatusUpdate;
     this.whisperContext = whisperContext;
-    
+
     // Internal state
     this.isCancelled = false;
-    this.tempFiles = [];
+    this.tempChunkFiles = []; // Store URIs of created chunk files for cleanup
+    console.log(`[AudioChunker] Initialized with ChunkSize: ${this.chunkSize}ms, Overlap: ${this.overlap}ms`);
   }
 
   /**
@@ -43,332 +49,247 @@ export class AudioChunker {
    */
   cancel() {
     this.isCancelled = true;
-    this.cleanupTempFiles();
+    console.log('[AudioChunker] Cancellation requested.');
+    this.cleanupTempFiles(); // Clean up immediately on cancel
   }
 
   /**
-   * Clean up temporary files created during chunking
+   * Clean up temporary chunk files created during processing
    */
   async cleanupTempFiles() {
+    if (this.tempChunkFiles.length === 0) return;
+    console.log(`[AudioChunker] Cleaning up ${this.tempChunkFiles.length} temporary chunk files...`);
+    const cleanupPromises = this.tempChunkFiles.map(chunkUri => {
+        // FileSystem.deleteAsync expects URI
+        return FileSystem.deleteAsync(chunkUri, { idempotent: true }).catch(e => {
+            console.warn(`[AudioChunker] Failed to delete temp file ${chunkUri}:`, e);
+        });
+    });
     try {
-      for (const filePath of this.tempFiles) {
-        await FileSystem.deleteAsync(filePath, { idempotent: true });
-      }
-      this.tempFiles = [];
+        await Promise.all(cleanupPromises);
+        console.log('[AudioChunker] Temporary files cleanup complete.');
     } catch (error) {
-      console.warn('Error cleaning up temp files:', error);
-    }
-  }
-
-  /**
-   * Get audio duration in milliseconds
-   */
-  async getAudioDuration(audioPath) {
-    try {
-      // For files from assets (like sample.wav), we need a different approach
-      if (typeof audioPath !== 'string') {
-        console.log('Asset file detected, using default duration');
-        return 60000; // Default to 1 minute for bundled assets
-      }
-      
-      // Use a simpler FFmpeg command that should work with most versions
-      const command = `-i "${audioPath}"`;
-      
-      return new Promise((resolve) => {
-        FFmpegKit.executeAsync(
-          command,
-          async (session) => {
-            const output = await session.getAllLogsAsString();
-            console.log('FFmpeg output for duration detection:', output);
-            
-            // Extract duration from output using regex
-            // FFmpeg typically outputs duration in format: Duration: 00:01:23.45
-            const durationMatch = output.match(/Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-            
-            if (durationMatch) {
-              const hours = parseInt(durationMatch[1]);
-              const minutes = parseInt(durationMatch[2]);
-              const seconds = parseInt(durationMatch[3]);
-              const centiseconds = parseInt(durationMatch[4]);
-              
-              const durationMs = (hours * 3600 + minutes * 60 + seconds) * 1000 + centiseconds * 10;
-              console.log(`Extracted duration: ${durationMs}ms`);
-              resolve(durationMs);
-            } else {
-              console.log('Could not extract duration, using default');
-              resolve(60000); // Default to 1 minute if duration can't be detected
-            }
-          },
-          (log) => {
-            console.log(`FFmpeg duration log: ${log.getMessage()}`);
-          }
-        );
-      });
-    } catch (error) {
-      console.error('Error getting audio duration:', error);
-      // Fallback value
-      return 60000; // Default to 1 minute
-    }
-  }
-
-  /**
-   * Extract a segment of audio from the file
-   */
-  async extractAudioSegment(audioPath, startMs, endMs) {
-    try {
-      // For bundled assets, we need a different approach
-      if (typeof audioPath !== 'string') {
-        console.log('Cannot extract from bundled asset, using full asset');
-        return audioPath;
-      }
-      
-      // Create a unique name for the chunk file
-      const outputPath = `${FileSystem.cacheDirectory}chunk_${Date.now()}_${Math.floor(Math.random() * 1000)}.wav`;
-      
-      // Format start and end time for FFmpeg (format: HH:MM:SS.mmm)
-      const formatTime = (ms) => {
-        const totalSeconds = ms / 1000;
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const seconds = Math.floor(totalSeconds % 60);
-        const milliseconds = Math.floor(ms % 1000);
-        
-        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
-      };
-      
-      const startTime = formatTime(startMs);
-      const durationMs = endMs - startMs;
-      const durationTime = formatTime(durationMs);
-      
-      // Create FFmpeg command to extract segment
-      const command = `-i "${audioPath}" -ss ${startTime} -t ${durationTime} -c:a pcm_s16le -ar 16000 -ac 1 "${outputPath}"`;
-      
-      console.log(`Extracting audio segment from ${startTime} to ${durationTime}`);
-      
-      // Execute FFmpeg command
-      return new Promise((resolve, reject) => {
-        FFmpegKit.executeAsync(
-          command,
-          async (session) => {
-            const returnCode = await session.getReturnCode();
-            if (ReturnCode.isSuccess(returnCode)) {
-              // Add to temp files for cleanup
-              this.tempFiles.push(outputPath);
-              resolve(outputPath);
-            } else {
-              const output = await session.getOutput();
-              console.error('FFmpeg extraction error:', output);
-              reject(new Error(`FFmpeg error extracting segment: ${returnCode}`));
-            }
-          },
-          (log) => {
-            console.log(`FFmpeg extraction log: ${log.getMessage()}`);
-          }
-        );
-      });
-    } catch (error) {
-      console.error('Error extracting audio segment:', error);
-      throw error;
+        console.warn('[AudioChunker] Error during batch cleanup:', error);
+    } finally {
+        this.tempChunkFiles = []; // Clear the list regardless of success
     }
   }
 
   /**
    * Transcribe a single audio chunk
+   * Accepts URI or path for the chunk
    */
-  async transcribeSingleChunk(chunkPath, options) {
-    if (!this.whisperContext) {
-      throw new Error('Whisper context not initialized');
-    }
-    
+  async transcribeSingleChunk(chunkInput, options) {
+    if (this.isCancelled) throw new Error('Transcription cancelled');
+    if (!this.whisperContext) throw new Error('Whisper context not initialized');
+
     try {
-      console.log(`Transcribing chunk: ${typeof chunkPath === 'string' ? chunkPath : 'bundled asset'}`);
-      
-      // Make sure we have valid options
+      const isBundledAsset = typeof chunkInput !== 'string' || !chunkInput.startsWith('file://');
+      const logPath = isBundledAsset ? 'Bundled Asset/Sample' : chunkInput;
+      // whisper.rn transcribe expects a POSIX path for local files
+      const transcribePath = isBundledAsset ? chunkInput : chunkInput.replace(/^file:\/\//, '');
+
+      console.log(`[AudioChunker] Transcribing chunk: ${logPath} (using path: ${transcribePath})`);
+
       const safeOptions = options || {};
-      
-      // Use the loaded whisper context for transcription
+
       if (this.whisperContext && typeof this.whisperContext.transcribe === 'function') {
-        const { promise } = this.whisperContext.transcribe(chunkPath, safeOptions);
+        const { promise } = this.whisperContext.transcribe(transcribePath, safeOptions);
         const result = await promise;
-        
-        // Ensure result has expected properties
+
         if (!result || typeof result.result === 'undefined') {
-          console.warn('Whisper returned unexpected result structure:', result);
-          return { result: '' }; // Return empty string as fallback
+          console.warn('[AudioChunker] Whisper returned unexpected result structure:', result);
+          return { result: '', segments: [] }; // Return default structure
         }
-        
-        return result;
+        console.log(`[AudioChunker] Chunk transcription raw result: "${result.result}"`);
+        return result; // Contains { result: string, segments: [...] }
       } else {
         throw new Error('Invalid Whisper context: transcribe function not available');
       }
     } catch (error) {
-      console.error('Error transcribing chunk:', error);
-      throw error;
+      console.error('[AudioChunker] Error transcribing chunk:', error);
+      throw error; // Re-throw
     }
   }
 
   /**
    * Merge transcription results from multiple chunks
+   * Basic merging - simply concatenates text results for now.
    */
   mergeTranscriptionResults(results) {
-    // Sort results by chunk index
+    console.log(`[AudioChunker] Merging results from ${results.length} chunks.`);
+    // Sort results by chunk index just in case they arrive out of order
     results.sort((a, b) => a.chunkIndex - b.chunkIndex);
-    
-    // Initialize merged result
-    let mergedText = '';
-    
-    // Process each chunk's results
-    results.forEach((chunkResult, index) => {
-      if (index === 0) {
-        // For first chunk, take everything
-        mergedText = chunkResult.result || '';
-      } else {
-        // For subsequent chunks, handle overlap
-        const prevChunkEnd = results[index-1].endTime;
-        const currentChunkStart = chunkResult.startTime;
-        
-        // Calculate overlap
-        const overlapDuration = Math.max(0, prevChunkEnd - currentChunkStart);
-        
-        // Add a space between chunks
-        mergedText += ' ' + (chunkResult.result || '');
-      }
-    });
-    
+
+    // Simple concatenation for now
+    const mergedText = results.map(r => r.result || '').join(' ').trim();
+
+    // TODO: Implement more sophisticated merging based on timestamps/overlap if needed.
+    // const mergedSegments = results.reduce((acc, r) => acc.concat(r.segments || []), []);
+
+    console.log(`[AudioChunker] Merged Text: "${mergedText.substring(0, 100)}..."`);
     return {
-      result: mergedText.trim()
+      result: mergedText
+      // segments: mergedSegments // If implemented
     };
   }
 
   /**
    * Transcribe audio with chunking
+   * Accepts the original audio URI
    */
-  async transcribeWithChunking(audioPath, transcriptionOptions = {}) {
+  async transcribeWithChunking(audioUri, transcriptionOptions = {}, providedDuration = null) {
+    console.log(`[AudioChunker] Starting transcribeWithChunking for URI: ${audioUri}`);
+    this.isCancelled = false; // Reset cancellation flag
+    this.tempChunkFiles = []; // Reset temp file list
+
     try {
-      if (this.isCancelled) {
-        throw new Error('Transcription cancelled');
-      }
-      
-      // For bundled assets, use direct transcription
-      if (typeof audioPath !== 'string') {
+      if (this.isCancelled) throw new Error('Transcription cancelled');
+
+      const isBundledAsset = typeof audioUri !== 'string' || !audioUri.startsWith('file://');
+
+      if (isBundledAsset) {
         this.onStatusUpdate('Processing bundled asset (direct transcription)...');
-        try {
-          // Direct transcription for bundled assets
-          const result = await this.transcribeSingleChunk(audioPath, transcriptionOptions);
+        console.log('[AudioChunker] Bundled asset detected, using direct transcription.');
+        // Use the transcribeSingleChunk method directly for assets
+        const result = await this.transcribeSingleChunk(audioUri, transcriptionOptions);
+        return { result: result.result || '' };
+      }
+
+      // Verify platform support for chunking (implicitly checked by audioUtils availability)
+      if (Platform.OS !== 'ios') {
+          console.warn('[AudioChunker] Chunking only supported on iOS. Attempting direct transcription.');
+          this.onStatusUpdate('Chunking not supported, using direct transcription...');
+          const result = await this.transcribeSingleChunk(audioUri, transcriptionOptions);
           return { result: result.result || '' };
-        } catch (error) {
-          console.error('Error transcribing bundled asset:', error);
-          throw new Error(`Failed to transcribe bundled asset: ${error.message}`);
-        }
       }
-      
-      // Get audio duration
-      this.onStatusUpdate('Analyzing audio file...');
-      let audioDuration;
-      try {
-        audioDuration = await this.getAudioDuration(audioPath);
-        this.onStatusUpdate(`Audio duration: ${(audioDuration / 1000 / 60).toFixed(1)} minutes`);
-      } catch (durationError) {
-        console.error('Error getting duration:', durationError);
-        // Just use direct transcription if we can't determine duration
-        this.onStatusUpdate('Could not determine audio duration, using direct transcription...');
-        const result = await this.transcribeSingleChunk(audioPath, transcriptionOptions);
-        return { result: result.result || '' };
+
+      // Get audio duration if not provided
+      let audioDuration = providedDuration;
+      if (!audioDuration || audioDuration <= 0) {
+          this.onStatusUpdate('Analyzing audio file duration...');
+          console.log('[AudioChunker] Getting audio duration...');
+          try {
+              // Use imported function - it expects URI
+              audioDuration = await getAudioDuration(audioUri);
+              if (!audioDuration || audioDuration <= 0) throw new Error('Invalid duration returned');
+              this.onStatusUpdate(`Audio duration: ${(audioDuration / 1000 / 60).toFixed(1)} minutes`);
+              console.log(`[AudioChunker] Got duration: ${audioDuration}ms`);
+          } catch (durationError) {
+              console.error('[AudioChunker] Error getting duration:', durationError);
+              this.onStatusUpdate('Could not determine duration, attempting direct transcription...');
+              // Pass URI to transcribeSingleChunk
+              const result = await this.transcribeSingleChunk(audioUri, transcriptionOptions);
+              return { result: result.result || '' };
+          }
       }
-      
+
       // If audio is short, use direct transcription
-      if (audioDuration <= this.chunkSize) {
-        this.onStatusUpdate('Audio is short, using direct transcription...');
-        const result = await this.transcribeSingleChunk(audioPath, transcriptionOptions);
-        return { result: result.result || '' };
+      const effectiveChunkThreshold = this.chunkSize + this.overlap;
+      if (audioDuration <= effectiveChunkThreshold) {
+          console.log(`[AudioChunker] Audio duration (${audioDuration}ms) is <= threshold (${effectiveChunkThreshold}ms), using direct transcription.`);
+          this.onStatusUpdate('Audio is short, using direct transcription...');
+          // Pass URI to transcribeSingleChunk
+          const result = await this.transcribeSingleChunk(audioUri, transcriptionOptions);
+          return { result: result.result || '' };
       }
-      
-      // Create chunks with overlap
+
+      // --- Proceed with Chunking ---
       const chunks = [];
-      for (let start = 0; start < audioDuration; start += this.chunkSize - this.overlap) {
-        const end = Math.min(start + this.chunkSize, audioDuration);
-        chunks.push({ 
-          start, 
-          end, 
-          index: chunks.length,
-          durationMs: end - start
-        });
+      const step = Math.max(1, this.chunkSize - this.overlap);
+      console.log(`[AudioChunker] Chunk Step (ChunkSize - Overlap): ${step}ms`);
+
+      for (let start = 0; start < audioDuration; start += step) {
+          const end = Math.min(start + this.chunkSize, audioDuration);
+          // Avoid creating tiny slivers at the end
+          if (end - start < Math.min(1000, this.overlap)) {
+             console.log(`[AudioChunker] Skipping tiny chunk at end: start=${start}, end=${end}`);
+             continue;
+          }
+          chunks.push({ start, end, index: chunks.length, durationMs: end - start });
       }
-      
+
+      console.log(`[AudioChunker] Calculated ${chunks.length} chunks.`);
+      if (chunks.length === 0) {
+         console.warn("[AudioChunker] No chunks calculated. Trying direct transcription.");
+         this.onStatusUpdate('Chunk calculation failed, using direct transcription...');
+         // Pass URI to transcribeSingleChunk
+         const result = await this.transcribeSingleChunk(audioUri, transcriptionOptions);
+         return { result: result.result || '' };
+      }
+
       this.onStatusUpdate(`Processing audio in ${chunks.length} chunks...`);
       let allResults = [];
-      
-      // Process each chunk sequentially
+
       for (let i = 0; i < chunks.length; i++) {
-        if (this.isCancelled) {
-          throw new Error('Transcription cancelled');
-        }
-        
-        const chunk = chunks[i];
-        this.onStatusUpdate(`Processing chunk ${i+1}/${chunks.length}...`);
-        
-        try {
-          // Extract audio segment for this chunk
-          const chunkPath = await this.extractAudioSegment(audioPath, chunk.start, chunk.end);
-          
-          // Set chunk-specific options
-          const chunkOptions = {
-            ...transcriptionOptions,
-            offset_ms: chunk.start,  // Tell Whisper where this chunk starts
-          };
-          
-          // Transcribe this chunk
-          const result = await this.transcribeSingleChunk(chunkPath, chunkOptions);
-          
-          // Store result with metadata
-          allResults.push({
-            ...result,
-            chunkIndex: chunk.index,
-            startTime: chunk.start,
-            endTime: chunk.end,
-            result: result.result || '' // Ensure result has a string value
-          });
-          
-          // Update progress
-          this.onProgress((i + 1) / chunks.length);
-          
-          // If this is a string path (not a bundled asset), clean up
-          if (typeof chunkPath === 'string' && chunkPath !== audioPath) {
-            // Delete chunk file to save space
-            try {
-              await FileSystem.deleteAsync(chunkPath, { idempotent: true });
-              // Remove from tempFiles list
-              this.tempFiles = this.tempFiles.filter(file => file !== chunkPath);
-            } catch (cleanupError) {
-              console.warn('Could not delete chunk file:', cleanupError);
-            }
-          }
-        } catch (chunkError) {
-          console.error(`Error processing chunk ${i+1}:`, chunkError);
-          // Continue with next chunk instead of failing completely
-          this.onStatusUpdate(`Skipping problematic chunk ${i+1} and continuing...`);
-        }
-      }
-      
-      // Merge results
+          if (this.isCancelled) throw new Error('Transcription cancelled');
+
+          const chunk = chunks[i];
+          this.onStatusUpdate(`Extracting & processing chunk ${i + 1}/${chunks.length}...`);
+          console.log(`[AudioChunker] Processing Chunk ${i + 1}: Start=${chunk.start}ms, End=${chunk.end}ms`);
+
+          let chunkUri = null;
+          try {
+              // Extract audio segment - use imported function, expects URI
+              console.log(`[AudioChunker] Calling extractAudioSegment for original URI: ${audioUri}`);
+              // extractAudioSegment returns the URI of the created chunk
+              chunkUri = await extractAudioSegment(audioUri, chunk.start, chunk.end);
+              this.tempChunkFiles.push(chunkUri); // Store URI for cleanup
+              console.log(`[AudioChunker] Extracted chunk URI: ${chunkUri}`);
+
+              const chunkOptions = { ...transcriptionOptions };
+              // Transcribe this chunk (pass URI)
+              const result = await this.transcribeSingleChunk(chunkUri, chunkOptions);
+
+              allResults.push({
+                  ...result, // Includes { result: string, segments: [...] }
+                  chunkIndex: chunk.index,
+                  startTime: chunk.start,
+                  endTime: chunk.end,
+              });
+
+              this.onProgress((i + 1) / chunks.length); // Update progress
+
+          } catch (chunkError) {
+              console.error(`[AudioChunker] Error processing chunk ${i + 1}:`, chunkError);
+              this.onStatusUpdate(`Skipping problematic chunk ${i + 1}...`);
+              // Don't re-throw, just skip this chunk
+          } finally {
+              // Clean up the individual chunk file immediately after processing (or error)
+              // Check if chunkUri (which is a file:// URI) was successfully created
+              if (chunkUri) {
+                  const uriToDelete = chunkUri; // Use the URI directly
+                  FileSystem.deleteAsync(uriToDelete, { idempotent: true })
+                      .then(() => console.log(`[AudioChunker] Deleted temp chunk ${uriToDelete}`))
+                      .catch(e => console.warn(`[AudioChunker] Failed to delete temp chunk ${uriToDelete}:`, e))
+                      .finally(() => {
+                          // Remove from list even if deletion failed
+                          this.tempChunkFiles = this.tempChunkFiles.filter(uri => uri !== uriToDelete);
+                      });
+              }
+          } // end try/catch/finally for single chunk processing
+      } // end for loop over chunks
+
+      if (this.isCancelled) throw new Error('Transcription cancelled');
+
       this.onStatusUpdate('Merging transcription results...');
-      
-      // If no results were obtained, throw error
       if (allResults.length === 0) {
-        throw new Error('No valid transcription results were obtained');
+          throw new Error('Chunking completed, but no valid transcription results were obtained.');
       }
-      
+
       const mergedResult = this.mergeTranscriptionResults(allResults);
-      
-      // Clean up temporary files
+
+      // Final cleanup (should be empty if finally block worked)
       await this.cleanupTempFiles();
-      
+
+      console.log('[AudioChunker] Chunking transcription complete.');
       return mergedResult;
+
     } catch (error) {
-      console.error('Error in chunked transcription:', error);
-      // Ensure we clean up even if there's an error
-      await this.cleanupTempFiles();
-      throw error;
+        console.error('[AudioChunker] Error in transcribeWithChunking:', error);
+        // Ensure cleanup happens on any error
+        await this.cleanupTempFiles();
+        throw error; // Re-throw the error for App.js to handle
     }
   }
-}
+} // End Class AudioChunker
