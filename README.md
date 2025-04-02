@@ -1,4 +1,4 @@
-# MyWhisperApp - iOS Audio Transcription with Whisper
+# native-whisper-transcription - iOS Audio Transcription with Whisper
 
 **Status:** Active Development (April 2025)
 **Platform:** iOS (Physical Device via Expo Dev Builds)
