@@ -1,8 +1,11 @@
 # native-whisper-transcription: System Architecture and Implementation Details
 
 **Author:** Gabriel Anyosa
+
 **Date:** April 3, 2025
+
 **Status:** Implemented (with known issues)
+
 **Document Version:** 1.1
 
 *Initial Design Document Version: 1.0 (April 1, 2025)*
