@@ -49,7 +49,7 @@ The primary goal is to provide a reliable way to transcribe audio from device re
 **Installation:**
 
 1.  Clone the repository (if applicable).
-2.  Navigate to the project directory: `cd MyWhisperApp`
+2.  Navigate to the project directory: `cd native-whisper-transcription`
 3.  Install dependencies: `npm install` or `yarn install`
 4.  Install Cocoapods dependencies: `cd ios && pod install && cd ..`
 
