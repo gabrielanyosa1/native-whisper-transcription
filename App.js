@@ -485,8 +485,34 @@ export default function App() {
    };
 
   // --- UI Rendering Functions ---
-  const renderProgressBar = () => { /* ... (keep as is) ... */ };
-  const renderHistory = () => { /* ... (keep as is) ... */ };
+  const renderProgressBar = () => {
+    return (
+      <View style={styles.progressBarContainer}>
+        <View style={[styles.progressBar, { width: `${progress * 100}%` }]} />
+      </View>
+    );
+  };
+  
+  const renderHistory = () => {
+    if (transcriptionHistory.length === 0) {
+      return (
+        <View style={styles.emptyHistoryContainer}>
+          <Text style={styles.emptyHistoryText}>No transcriptions yet</Text>
+        </View>
+      );
+    }
+    
+    return (
+      <ScrollView style={styles.historyScrollView}>
+        {transcriptionHistory.map((item) => (
+          <View key={item.id} style={styles.historyItem}>
+            <Text style={styles.historySource}>{item.source} • {item.time}</Text>
+            <Text style={styles.historyText}>{item.text}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    );
+  };
 
   // --- Main Return JSX ---
   return (
