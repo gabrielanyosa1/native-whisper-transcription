@@ -5,7 +5,7 @@
 
 ## Introduction
 
-MyWhisperApp is a React Native application built using the Expo framework (specifically leveraging Development Builds) designed to perform on-device audio transcription using OpenAI's Whisper model. It utilizes the `whisper.rn` library for the core transcription functionality and incorporates a custom native Swift module (`AVFoundationAudio`) to handle robust audio processing tasks on iOS.
+`native-whisper-transcription` is a React Native application built using the Expo framework (specifically leveraging Development Builds) designed to perform on-device audio transcription using OpenAI's Whisper model. It utilizes the `whisper.rn` library for the core transcription functionality and incorporates a custom native Swift module (`AVFoundationAudio`) to handle robust audio processing tasks on iOS.
 
 The primary goal is to provide a reliable way to transcribe audio from device recordings or selected files, converting them to the required format (16kHz mono WAV) and handling long files efficiently through chunking.
 
