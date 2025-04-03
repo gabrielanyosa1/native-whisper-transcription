@@ -39,29 +39,35 @@ The primary goal is to provide a reliable way to transcribe audio from device re
 
 **Prerequisites:**
 
-* Node.js (LTS recommended)
 * npm or Yarn
 * Expo CLI (`npm install -g expo-cli`)
 * Xcode and Command Line Tools
-* CocoaPods (`sudo gem install cocoapods`)
 * A physical iOS device (simulator support for native modules might vary, Metal requires a device).
 
 **Installation:**
 
-1.  Clone the repository (if applicable).
+1.  Clone the repository.
 2.  Navigate to the project directory: `cd native-whisper-transcription`
 3.  Install dependencies: `npm install` or `yarn install`
-4.  Install Cocoapods dependencies: `cd ios && pod install && cd ..`
 
 **Running the Development Build:**
 
 1.  Connect your physical iOS device via USB.
-2.  Build and launch the app on your device:
+2.  Prebuild the ios project:
+    ```bash
+    npx expo prebuild --platform ios
+    ```
+    NOTE: Once built, you must navigate to `ios` directory and open the `*.xcworkspace` Xcode project. Once there, add `AVFoundationAudio.m` and `AVFoundationAudio.swift` (recommended to copy directly from github as these will be replaced every rebuild due to expo platform management) as new files into the current project through the GUI. Ensure they target the current project, and enable extended virtual addressing in the `Signing and Capabilities` tab. Add the following lines into the generated `*-Bridging-Header.h` found inside the ios/native-whisper-transcription directory: 
+    ```cpp
+    #import <React/RCTBridgeModule.h>
+    #import <React/RCTEventEmitter.h>
+    ```
+3.  Build and launch the app on your device:
     ```bash
     npx expo run:ios --device
     ```
-3.  The Expo Go app is **not** used; this command builds the native code (including the custom module) into a standalone development app (`.ipa`) installed on your device.
-4.  The Metro bundler will start in the terminal. Keep it running. Logs from both JavaScript and the native module (via the event bridge) will appear here.
+4.  The Expo Go app is **not** used; this command builds the native code (including the custom module) into a standalone development app (`.ipa`) installed on your device.
+5.  The Metro bundler will start in the terminal. Keep it running. Logs from both JavaScript and the native module (via the event bridge) will appear here.
 
 **Model Downloads:**
 
